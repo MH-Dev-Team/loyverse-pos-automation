@@ -175,18 +175,35 @@ def export_sales(data: tuple | list) -> None:
 
 
 def send(localpath: str, remotepath: str) -> None:
-    """Sales file submission"""
+    """Sales file submission.
+    Need to initialize ssh connection first to generate host key
+    """
     with paramiko.SSHClient() as ssh:
-        ssh.load_system_host_keys()
-        ssh.connect(
-            hostname=os.getenv("FTP_HOST", ""),
-            port=int(os.getenv("PORT", 22)),
-            username=os.getenv("FTP_USERNAME"),
-            password=os.getenv("FTP_PASSWORD"),
-        )
-        sftp = ssh.open_sftp()
-        sftp.put(localpath, remotepath)
-        logging.info(f"submit {localpath} to remotepath")
+        try:
+            ssh.load_system_host_keys()
+            ssh.connect(
+                hostname=os.getenv("FTP_HOST", "localhost"),
+                port=int(os.getenv("PORT", 22)),
+                username=os.getenv("FTP_USERNAME"),
+                password=os.getenv("FTP_PASSWORD"),
+            )
+            logging.info(f"connecting to remote sftp server")
+            # sftp = ssh.open_sftp()
+            try:
+                tp = ssh.get_transport()
+                if tp:
+                    sftp = paramiko.SFTPClient.from_transport(tp)
+                    sftp.put(localpath, remotepath)
+                    logging.info(f"submit {localpath} to remotepath")
+                    sftp.close()
+            except Exception as e:
+                logging.error(f"{type(e).__name__}: {str(e)}")
+                raise e
+        except paramiko.ssh_exception.SSHException as e:
+            logging.error(f"{str(e)}")
+        except Exception as e:
+            logging.error(f"{type(e).__name__}: {str(e)}")
+            raise e
 
 
 def delete(fname: str) -> None:
@@ -206,10 +223,15 @@ def application(
         data = gross_sales_amount(tenant=name, date=date, lot=code)
         export_sales(data)
         f = generate_file_name(data)
-        if submit:
-            send(f, f)
-        if rmafter:
-            delete(f)
+        try:
+            if submit:
+                send(f, f)
+        except Exception as e:
+            if rmafter:
+                delete(f)
+        finally:
+            if rmafter:
+                delete(f)
 
 
 if __name__ == "__main__":
